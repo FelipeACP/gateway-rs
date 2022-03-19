@@ -16,5 +16,5 @@ jobs:
           owner: 'helium'
           base: main
           head: main
-          auto_approve: true
-          personal_token: ${{ secrets.PERSONAL_TOKEN }}
+          #auto_approve: true
+          #personal_token: ${{ secrets.PERSONAL_TOKEN }}
