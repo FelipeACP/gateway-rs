@@ -1,0 +1,10 @@
+region = "AU915"
+
+[log]
+method = "syslog"
+level = "info"
+timestamp = false
+
+[update]
+platform = "raspi234"
+channel = "beta"
