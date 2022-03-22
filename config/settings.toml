@@ -8,3 +8,5 @@ timestamp = false
 [update]
 platform = "raspi234"
 channel = "beta"
+keypair = "ecc://i2c-1:96?slot=0&network=testnet
+
