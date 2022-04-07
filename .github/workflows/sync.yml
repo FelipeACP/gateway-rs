@@ -2,7 +2,7 @@ name: Sync Fork
 
 on:
   schedule:
-    - cron: '0 21 * * *' # every 30 minutes
+    - cron: '0 21 * * *' # Runs at 21:00 UTC every day.
   workflow_dispatch: # on button click
 
 jobs:
@@ -16,5 +16,5 @@ jobs:
           owner: helium
           base: main
           head: main
-          #auto_approve: true
-          #personal_token: ${{ secrets.PERSONAL_TOKEN }}
+          auto_approve: true
+          personal_token: ${{ secrets.PERSONAL_TOKEN }}
