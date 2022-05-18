@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "gateway-rs"
-version = "1.0.0-alpha.23"
+version = "1.0.0-alpha.25"
 dependencies = [
  "angry-purple-tiger",
  "async-trait",
@@ -666,7 +666,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_urlencoded",
- "sha2 0.10.2",
+ "sha2 0.9.9",
  "signature",
  "slog",
  "slog-async",
@@ -786,7 +786,7 @@ dependencies = [
 [[package]]
 name = "helium-proto"
 version = "0.1.0"
-source = "git+https://github.com/helium/proto?branch=master#5b649b1b1e23002826c1d252a0646fc5a7328578"
+source = "git+https://github.com/helium/proto?branch=master#c3826f6bc385a59bd59464dee2a4a0caeb544972"
 dependencies = [
  "bytes",
  "prost",
