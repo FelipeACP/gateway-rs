@@ -10,7 +10,6 @@ use futures::{
     TryFutureExt,
 };
 use helium_proto::BlockchainVarV1;
-use http::uri::Uri;
 use slog::{debug, info, o, warn, Logger};
 use slog_scope;
 use std::{collections::HashMap, pin::Pin, sync::Arc, time::Duration};
@@ -37,6 +36,7 @@ pub struct HeightResponse {
     pub gateway: KeyedUri,
     pub height: u64,
     pub block_age: u64,
+    pub gateway_version: Option<u64>,
 }
 
 pub type MessageSender = sync::MessageSender<Message>;
@@ -90,13 +90,13 @@ pub struct Dispatcher {
     cache_settings: CacheSettings,
     gateway_retry: u32,
     routers: HashMap<RouterKey, RouterEntry>,
-    default_router: Option<KeyedUri>,
+    default_routers: Option<Vec<KeyedUri>>,
 }
 
 #[derive(PartialEq, Eq, Hash)]
 struct RouterKey {
     oui: u32,
-    uri: Uri,
+    uri: KeyedUri,
 }
 
 #[derive(Debug)]
@@ -131,7 +131,7 @@ impl Dispatcher {
     ) -> Result<Self> {
         let seed_gateways = settings.gateways.clone();
         let routers = HashMap::with_capacity(5);
-        let default_router = settings.default_router();
+        let default_routers = settings.routers.clone();
         let cache_settings = settings.cache.clone();
         Ok(Self {
             keypair: settings.keypair.clone(),
@@ -142,7 +142,7 @@ impl Dispatcher {
             routers,
             routing_height: 0,
             region_height: 0,
-            default_router,
+            default_routers,
             cache_settings,
             gateway_retry: 0,
         })
@@ -153,10 +153,12 @@ impl Dispatcher {
         info!(logger, "starting"; 
             "region" => self.region.to_string());
 
-        if let Some(default_router) = &self.default_router {
-            info!(logger, "default router";
-                "pubkey" => default_router.pubkey.to_string(),
-                "uri" => default_router.uri.to_string());
+        if let Some(default_routers) = &self.default_routers {
+            for default_router in default_routers {
+                info!(logger, "default router";
+                    "pubkey" => default_router.pubkey.to_string(),
+                    "uri" => default_router.uri.to_string());
+            }
         }
 
         let gateway_backoff = Backoff::new(
@@ -254,6 +256,9 @@ impl Dispatcher {
             "pubkey" => gateway.uri.pubkey.to_string(),
             "uri" => gateway.uri.uri.to_string());
 
+        // Notify of gateway change
+        self.notify_gateway_change(Some(gateway.clone())).await;
+        // Initialize liveness check for gateway
         let mut gateway_check = time::interval(GATEWAY_CHECK_INTERVAL);
         loop {
             tokio::select! {
@@ -312,6 +317,12 @@ impl Dispatcher {
         Ok(())
     }
 
+    async fn notify_gateway_change(&self, gateway: Option<GatewayService>) {
+        for router_entry in self.routers.values() {
+            router_entry.dispatch.gateway_changed(gateway.clone()).await;
+        }
+    }
+
     async fn prepare_gateway_change(
         &mut self,
         backoff: &Backoff,
@@ -322,10 +333,9 @@ impl Dispatcher {
         if shutdown.is_triggered() {
             return;
         }
-        // Tell routers to stop
-        for (_, router_entry) in self.routers.drain() {
-            router_entry.dispatch.gateway_changed().await;
-        }
+        // Tell routers to clear their gateway entries
+        self.notify_gateway_change(None).await;
+
         // Reset routing and region heigth for the next gateway
         self.routing_height = 0;
         self.region_height = 0;
@@ -367,6 +377,7 @@ impl Dispatcher {
             }
             Message::Height { response } => {
                 let reply = if let Some(gateway) = gateway {
+                    let gateway_version = gateway.version().await.unwrap_or(None);
                     gateway
                         .height()
                         .await
@@ -374,6 +385,7 @@ impl Dispatcher {
                             gateway: gateway.uri.clone(),
                             height,
                             block_age,
+                            gateway_version,
                         })
                 } else {
                     Err(Error::no_service())
@@ -396,9 +408,9 @@ impl Dispatcher {
             }
         }
         if !handled {
-            if let Some(default_router) = &self.default_router {
+            if let Some(default_routers) = &self.default_routers {
                 for (router_key, router_entry) in &self.routers {
-                    if router_key.uri == default_router.uri {
+                    if default_routers.contains(&router_key.uri) {
                         debug!(logger, "sending to default router");
                         let _ = router_entry.dispatch.uplink(packet.clone()).await;
                     }
@@ -489,7 +501,7 @@ impl Dispatcher {
         while let Some(uri) = uris.next().await {
             let key = RouterKey {
                 oui: routing.oui,
-                uri: uri.uri.clone(),
+                uri: uri.to_owned(),
             };
             // We have to allow clippy::map_entry above since we need to borrow
             // immutable before borrowing as mutable to insert
@@ -508,18 +520,23 @@ impl Dispatcher {
             }
         }
         // Remove any routers that are not in the new oui uri list
+        let mut removables = Vec::with_capacity(self.routers.len());
         self.routers.retain(|key, entry| {
             if key.oui == routing.oui && !entry.routing.contains_uri(&key.uri) {
                 // Router will be removed from the map. The router is expected
-                // to stop itself when it receives the routing message
+                // to stop itself when it receives the stop message
                 info!(logger, "removing router";
                     "oui" => key.oui,
-                    "uri" => key.uri.to_string()
+                    "uri" => key.uri.uri.to_string()
                 );
+                removables.push(entry.dispatch.clone());
                 return false;
             }
             true
         });
+        for removable in removables {
+            removable.stop().await;
+        }
     }
 
     async fn start_router(
